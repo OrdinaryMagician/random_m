@@ -1,0 +1,34 @@
+GameInfo
+{
+	AddEventHandlers = "RandomizerHandler", "RandomizerStaticData"
+	StatScreen_Coop = "RandomIntermissionCoop"
+	StatScreen_Single = "RandomIntermissionSingle"
+	StatScreen_Single = "RandomIntermissionDM"
+}
+
+// remove cluster texts
+cluster 1 {}
+cluster 2 {}
+cluster 3 {}
+cluster 4 {}
+cluster 5 {}
+cluster 6 {}
+cluster 7 {}
+cluster 8 {}
+cluster 9 {}
+cluster 10 {}
+cluster 11 {}
+cluster 12 {}
+cluster 13 {}
+cluster 14 {}
+cluster 15 {}
+cluster 16 {}
+cluster 17 {}
+cluster 18 {}
+cluster 19 {}
+cluster 20 {}
+cluster 21 {}
+cluster 22 {}
+cluster 23 {}
+cluster 24 {}
+cluster 25 {}

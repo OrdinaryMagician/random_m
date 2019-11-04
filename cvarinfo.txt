@@ -1,0 +1,2 @@
+server noarchive bool randomizer_debug = false;
+server bool randomizer_wild = false;

@@ -1,0 +1,555 @@
+version "4.3"
+
+// status screens for sp and coop
+// the main addition here is the "progress bar" at the bottom
+Class RandomIntermissionSingle : DoomStatusScreen
+{
+	mixin RandomIntermission;
+}
+Class RandomIntermissionCoop : CoopStatusScreen
+{
+	mixin RandomIntermission;
+}
+Class RandomIntermissionDM : DeathmatchStatusScreen
+{
+	mixin RandomIntermission;
+}
+mixin Class RandomIntermission
+{
+	TextureID bar[4];
+	TextureID plyr[4];
+	bool pflip[4];
+	int pcnt;
+
+	void DrawProgress()
+	{
+		// we need to access the static current/total values
+		let hnd = RandomizerStaticData(StaticEventHandler.Find("RandomizerStaticData"));
+		if ( !hnd ) return;
+		int ypos = 168;
+		// fill dat bar
+		for ( int x=14; x<306; x+=8 )
+			Screen.DrawTexture(bar[2],false,x,ypos,DTA_Clean,true);
+		Screen.DrawTexture(bar[1],false,6,ypos,DTA_Clean,true);
+		Screen.DrawTexture(bar[3],false,306,ypos,DTA_Clean,true);
+		// draw up to 3 stages
+		String txt;
+		int last = hnd.current-1;
+		// plus one for the "END" marker
+		for ( int i=0; i<hnd.total+1; i++ )
+		{
+			int xpos = 28+(i-last)*(256/2)-clamp((pcnt-96)*4,0,128);
+			if ( (xpos < 12) || (xpos > 302) ) continue;
+			Screen.DrawTexture(bar[0],false,xpos,ypos,DTA_Clean,true);
+			txt = (i>hnd.total)?"END":String.Format("%d",i+1);
+			Font fnt = (i>hnd.total)?BigFont:SmallFont;
+			xpos += 4;
+			Screen.DrawText(fnt,Font.CR_RED,xpos-fnt.StringWidth(txt)/2,ypos+16,txt,DTA_Clean,true);
+		}
+		// draw player(s)
+		double pofs = 0.;
+		for ( int i=0; i<MAXPLAYERS; i++ ) if ( playeringame[i] ) pofs += 1.;
+		static const Name trns[] = {'Player1','Player2','Player3','Player4','Player5','Player6','Player7','Player8'};
+		int xofs = int(((pofs-1)/2)*-12);
+		for ( int i=MAXPLAYERS-1; i>=0; i-- )
+		{
+			if ( !playeringame[i] ) continue;
+			Screen.DrawTexture(plyr[(gametic/3+i*11)%4],false,xofs+32+clamp((pcnt-32)*3,0,128)-clamp((pcnt-96)*4,0,128),ypos-8,DTA_Clean,true,DTA_FlipX,pflip[(gametic/3)%4],DTA_TranslationIndex,Translation.GetID(trns[i]));
+			xofs += 12;
+		}
+		// draw the "# maps left"
+		int togo = hnd.total-hnd.current;
+		txt = String.Format(StringTable.Localize((togo>1)?"$S_MAPSLEFT":"$S_MAPLEFT"),togo);
+		Screen.DrawText(BigFont,Font.CR_RED,160-BigFont.StringWidth(txt)/2,ypos+32,txt,DTA_Clean,true);
+	}
+
+	override void Ticker( void )
+	{
+		Super.Ticker();
+		// bar animation counter
+		switch ( CurState )
+		{
+		case StatCount:
+			pcnt = 0;
+			break;
+		case ShowNextLoc:
+			pcnt++;
+			break;
+		}
+	}
+
+	override void initShowNextLoc()
+	{
+		Super.initShowNextLoc();
+		// extra time for the full animation to play
+		cnt += 2*Thinker.TICRATE;
+	}
+
+	override void Drawer( void )
+	{
+		Super.Drawer();
+		// draw the progress bar
+		if ( CurState != StatCount ) DrawProgress();
+	}
+
+	override void Start( wbstartstruct wbstartstruct )
+	{
+		bar[0] = TexMan.CheckForTexture("M_THERMO",TexMan.Type_MiscPatch);
+		bar[1] = TexMan.CheckForTexture("M_THERML",TexMan.Type_MiscPatch);
+		bar[2] = TexMan.CheckForTexture("M_THERMM",TexMan.Type_MiscPatch);
+		bar[3] = TexMan.CheckForTexture("M_THERMR",TexMan.Type_MiscPatch);
+		let p = GetDefaultByType("DoomPlayer");
+		State s = p.FindState("See",true);
+		for ( int i=0; i<4; i++ )
+		{
+			[plyr[0], pflip[0]] = s.GetSpriteTexture(12);
+			s = s.NextState;
+		}
+		Super.Start(wbstartstruct);
+	}
+}
+
+// static handler for making certain data accessible by the intermission screen
+Class RandomizerStaticData : StaticEventHandler
+{
+	int current, total;
+}
+
+// persistent storage for session data (only need to save the "current")
+Class PlayCounter : Thinker
+{
+	int current;
+}
+
+// the main bulk of it all
+Class RandomizerHandler : EventHandler
+{
+	// current map and total maps in this session
+	int current, total;
+	// saved counter
+	PlayCounter cnt;
+
+	// replacement pools
+	Array<Class<Actor> > Tier1WeaponPool;
+	Array<Class<Actor> > Tier2WeaponPool;
+	Array<Class<Actor> > Tier1AmmoPool;
+	Array<Class<Actor> > Tier2AmmoPool;
+	Array<Class<Actor> > ArmorPool;
+	Array<Class<Actor> > HealthPool;
+	Array<Class<Actor> > BonusPool;
+	Array<Class<Actor> > ItemPool;
+	Array<Class<Actor> > Tier1MonsterPool;
+	Array<Class<Actor> > Tier2MonsterPool;
+	Array<Class<Actor> > BossPool;
+	Array<String> MusicPool;
+	Array<String> MapPool;
+
+	// prevents infinite loop when checking for replacements
+	bool bReentrant;
+
+	// checks that a weapon has a valid ready state
+	bool IsValidWeapon( Class<Actor> testme )
+	{
+		State rs = GetDefaultByType(testme).FindState("Ready");
+		if ( rs && rs.ValidateSpriteFrame() ) return true;
+		return false;
+	}
+
+	// checks that an actor has a valid spawn state
+	bool IsValidActor( Class<Actor> testme )
+	{
+		State ss = GetDefaultByType(testme).FindState("Spawn");
+		if ( ss && ss.ValidateSpriteFrame() ) return true;
+		return false;
+	}
+
+	// rounds up to the nearest multiple of 10, clamps between 10 and 100
+	private int roundup10( int val )
+	{
+		double rdn = ceil(val/10.);
+		return clamp(int(rdn*10),10,100);
+	}
+
+	override void WorldUnloaded( WorldEvent e )
+	{
+		if ( gamestate == GS_TITLELEVEL ) return;
+		// increment counter
+		cnt.current++;
+		// pass data to static storage
+		let hnd = RandomizerStaticData(StaticEventHandler.Find("RandomizerStaticData"));
+		if ( !hnd ) return;
+		hnd.current = cnt.current;
+		hnd.total = total;
+	}
+
+	override void WorldLoaded( WorldEvent e )
+	{
+		if ( gamestate == GS_TITLELEVEL ) return;
+		// setup counter
+		cnt = PlayCounter(ThinkerIterator.Create("PlayCounter",Thinker.STAT_STATIC).Next());
+		if ( !cnt )
+		{
+			cnt = new("PlayCounter");
+			cnt.ChangeStatNum(Thinker.STAT_STATIC);
+			cnt.current = 0;
+		}
+		current = cnt.current;
+		total = roundup10(MapPool.Size());
+		if ( current+1 >= total )
+		{
+			// end of the line
+			level.nextmap = "EndGameC";
+			level.nextsecretmap = "EndGameC";
+		}
+		else
+		{
+			// randomize next level
+			int thisone = MapPool.Find(level.mapname);
+			if ( thisone < MapPool.Size() )
+			{
+				// make sure we don't do the same level twice
+				// in a row
+				int pos = Random[Shuffler](0,MapPool.Size()-2);
+				if ( pos == thisone ) pos++;
+				level.nextmap = MapPool[pos];
+				pos = Random[Shuffler](0,MapPool.Size()-2);
+				if ( pos == thisone ) pos++;
+				level.nextsecretmap = MapPool[pos];
+			}
+			else
+			{
+				level.nextmap = MapPool[Random[Shuffler](0,MapPool.Size()-1)];
+				level.nextsecretmap = MapPool[Random[Shuffler](0,MapPool.Size()-1)];
+			}
+		}
+		// randomize music
+		S_ChangeMusic(MusicPool[Random[Shuffler](0,MusicPool.Size()-1)]);
+	}
+
+	override void OnRegister()
+	{
+		// populate pools
+		Tier1WeaponPool.Push((Class<Actor>)('Chainsaw'));
+		Tier1WeaponPool.Push((Class<Actor>)('Pistol'));
+		Tier1WeaponPool.Push((Class<Actor>)('Shotgun'));
+		if ( IsValidWeapon('SuperShotgun') ) Tier2WeaponPool.Push((Class<Actor>)('SuperShotgun'));
+		Tier1WeaponPool.Push((Class<Actor>)('Chaingun'));
+		Tier2WeaponPool.Push((Class<Actor>)('RocketLauncher'));
+		Tier2WeaponPool.Push((Class<Actor>)('PlasmaRifle'));
+		Tier2WeaponPool.Push((Class<Actor>)('BFG9000'));
+		Tier1AmmoPool.Push((Class<Actor>)('Clip'));
+		Tier1AmmoPool.Push((Class<Actor>)('ClipBox'));
+		Tier1AmmoPool.Push((Class<Actor>)('Shell'));
+		Tier1AmmoPool.Push((Class<Actor>)('ShellBox'));
+		Tier2AmmoPool.Push((Class<Actor>)('RocketAmmo'));
+		Tier2AmmoPool.Push((Class<Actor>)('RocketBox'));
+		Tier2AmmoPool.Push((Class<Actor>)('Cell'));
+		Tier2AmmoPool.Push((Class<Actor>)('CellPack'));
+		BonusPool.Push((Class<Actor>)('ArmorBonus'));
+		ArmorPool.Push((Class<Actor>)('GreenArmor'));
+		ArmorPool.Push((Class<Actor>)('BlueArmor'));
+		BonusPool.Push((Class<Actor>)('HealthBonus'));
+		HealthPool.Push((Class<Actor>)('Stimpack'));
+		HealthPool.Push((Class<Actor>)('Medikit'));
+		ItemPool.Push((Class<Actor>)('Backpack'));
+		ItemPool.Push((Class<Actor>)('Soulsphere'));
+		if ( IsValidActor('Megasphere') ) ItemPool.Push((Class<Actor>)('Megasphere'));
+		ItemPool.Push((Class<Actor>)('Berserk'));
+		ItemPool.Push((Class<Actor>)('InvulnerabilitySphere'));
+		ItemPool.Push((Class<Actor>)('Blursphere'));
+		ItemPool.Push((Class<Actor>)('Infrared'));
+		ItemPool.Push((Class<Actor>)('AllMap'));
+		ItemPool.Push((Class<Actor>)('RadSuit'));
+		Tier1MonsterPool.Push((Class<Actor>)('Zombieman'));
+		Tier1MonsterPool.Push((Class<Actor>)('ShotgunGuy'));
+		Tier1MonsterPool.Push((Class<Actor>)('DoomImp'));
+		Tier1MonsterPool.Push((Class<Actor>)('Demon'));
+		Tier1MonsterPool.Push((Class<Actor>)('Spectre'));
+		Tier2MonsterPool.Push((Class<Actor>)('BaronOfHell'));
+		Tier2MonsterPool.Push((Class<Actor>)('Cacodemon'));
+		Tier1MonsterPool.Push((Class<Actor>)('LostSoul'));
+		BossPool.Push((Class<Actor>)('Cyberdemon'));
+		BossPool.Push((Class<Actor>)('Spidermastermind'));
+		if ( IsValidActor('ChaingunGuy') ) Tier1MonsterPool.Push((Class<Actor>)('ChaingunGuy'));
+		if ( IsValidActor('Revenant') ) Tier2MonsterPool.Push((Class<Actor>)('Revenant'));
+		if ( IsValidActor('PainElemental') ) Tier2MonsterPool.Push((Class<Actor>)('PainElemental'));
+		if ( IsValidActor('Archvile') ) Tier2MonsterPool.Push((Class<Actor>)('Archvile'));
+		if ( IsValidActor('Arachnotron') ) Tier2MonsterPool.Push((Class<Actor>)('Arachnotron'));
+		if ( IsValidActor('Fatso') ) Tier2MonsterPool.Push((Class<Actor>)('Fatso'));
+		if ( IsValidActor('WolfensteinSS') ) Tier1MonsterPool.Push((Class<Actor>)('WolfensteinSS'));
+		// map pool is a bit complicated
+		// doom 1
+		if ( Wads.FindLump("E1M1") )
+		{
+			for ( int i=1; i<9; i++ )
+				MapPool.Push(String.Format("E1M%d",i));
+			// xbox
+			if ( Wads.FindLump("E1M10") )
+				MapPool.Push("E1M10");
+		}
+		// registered
+		if ( Wads.FindLump("E2M1") )
+		{
+			for ( int i=1; i<9; i++ )
+				MapPool.Push(String.Format("E2M%d",i));
+			for ( int i=1; i<9; i++ )
+				MapPool.Push(String.Format("E3M%d",i));
+		}
+		// ultimate
+		if ( Wads.FindLump("E4M1") )
+			for ( int i=1; i<9; i++ )
+				MapPool.Push(String.Format("E4M%d",i));
+		// sigil
+		if ( Wads.FindLump("E5M1") )
+			for ( int i=1; i<9; i++ )
+				MapPool.Push(String.Format("E5M%d",i));
+		// doom 2
+		if ( Wads.FindLump("MAP01") )
+		{
+			for ( int i=1; i<32; i++ )
+				MapPool.Push(String.Format("MAP%02d",i));
+			// xbox
+			if ( Wads.FindLump("MAP33") )
+				MapPool.Push("MAP33");
+		}
+		// wadsmoosh
+		// plutonia
+		if ( Wads.FindLump("PL_MAP01") )
+		{
+			for ( int i=1; i<32; i++ )
+				MapPool.Push(String.Format("PL_MAP%02d",i));
+		}
+		// tnt
+		if ( Wads.FindLump("TN_MAP01") )
+		{
+			for ( int i=1; i<32; i++ )
+				MapPool.Push(String.Format("TN_MAP%02d",i));
+		}
+		// master levels
+		if ( Wads.FindLump("ML_MAP01") )
+		{
+			for ( int i=1; i<21; i++ )
+				MapPool.Push(String.Format("ML_MAP%02d",i));
+		}
+		// nrftl
+		if ( Wads.FindLump("NV_MAP01") )
+		{
+			for ( int i=1; i<9; i++ )
+				MapPool.Push(String.Format("ML_MAP%02d",i));
+		}
+		// same for music pool
+		// doom 1
+		if ( Wads.FindLump("D_E1M1") )
+		{
+			for ( int i=1; i<9; i++ )
+				MusicPool.Push(String.Format("D_E1M%d",i));
+		}
+		// registered
+		if ( Wads.FindLump("D_E2M1") )
+		{
+			for ( int i=1; i<9; i++ )
+				MusicPool.Push(String.Format("D_E2M%d",i));
+			for ( int i=1; i<9; i++ )
+				MusicPool.Push(String.Format("D_E3M%d",i));
+		}
+		// ultimate doom doesn't have separate tracks
+		// sigil
+		if ( Wads.FindLump("D_E5M1") )
+		{
+			for ( int i=1; i<9; i++ )
+				MusicPool.Push(String.Format("D_E5M%d",i));
+		}
+		// these can't be simplified
+		// doom 2
+		if ( Wads.FindLump("D_RUNNIN") )
+		{
+			MusicPool.Push("D_RUNNIN");
+			MusicPool.Push("D_STALKS");
+			MusicPool.Push("D_COUNTD");
+			MusicPool.Push("D_BETWEE");
+			MusicPool.Push("D_DOOM");
+			MusicPool.Push("D_THE_DA");
+			MusicPool.Push("D_SHAWN");
+			MusicPool.Push("D_DDTBLU");
+			MusicPool.Push("D_IN_CIT");
+			MusicPool.Push("D_DEAD");
+			MusicPool.Push("D_STLKS2");
+			MusicPool.Push("D_THEDA2");
+			MusicPool.Push("D_DOOM2");
+			MusicPool.Push("D_DDTBL2");
+			MusicPool.Push("D_RUNNI2");
+			MusicPool.Push("D_DEAD2");
+			MusicPool.Push("D_STLKS3");
+			MusicPool.Push("D_ROMERO");
+			MusicPool.Push("D_SHAWN2");
+			MusicPool.Push("D_MESSAG");
+			MusicPool.Push("D_COUNT2");
+			MusicPool.Push("D_DDTBL3");
+			MusicPool.Push("D_AMPIE");
+			MusicPool.Push("D_THEDA3");
+			MusicPool.Push("D_ADRIAN");
+			MusicPool.Push("D_MESSG2");
+			MusicPool.Push("D_ROMER2");
+			MusicPool.Push("D_TENSE");
+			MusicPool.Push("D_SHAWN3");
+			MusicPool.Push("D_OPENIN");
+			MusicPool.Push("D_EVIL");
+			MusicPool.Push("D_ULTIMA");
+		}
+		// wadsmoosh
+		// plutonia
+		if ( Wads.FindLump("P_RUNNIN") )
+		{
+			MusicPool.Push("P_RUNNIN");
+			MusicPool.Push("P_STALKS");
+			MusicPool.Push("P_COUNTD");
+			MusicPool.Push("P_BETWEE");
+			MusicPool.Push("P_DOOM");
+			MusicPool.Push("P_THE_DA");
+			MusicPool.Push("P_SHAWN");
+			MusicPool.Push("P_DDTBLU");
+			MusicPool.Push("P_IN_CIT");
+			MusicPool.Push("P_DEAD");
+			MusicPool.Push("P_STLKS2");
+			MusicPool.Push("P_THEDA2");
+			MusicPool.Push("P_DOOM2");
+			MusicPool.Push("P_DDTBL2");
+			MusicPool.Push("P_RUNNI2");
+			MusicPool.Push("P_DEAD2");
+			MusicPool.Push("P_STLKS3");
+			MusicPool.Push("P_ROMERO");
+			MusicPool.Push("P_SHAWN2");
+			MusicPool.Push("P_MESSAG");
+			MusicPool.Push("P_COUNT2");
+			MusicPool.Push("P_DDTBL3");
+			MusicPool.Push("P_AMPIE");
+			MusicPool.Push("P_THEDA3");
+			MusicPool.Push("P_ADRIAN");
+			MusicPool.Push("P_MESSG2");
+			MusicPool.Push("P_ROMER2");
+			MusicPool.Push("P_TENSE");
+			MusicPool.Push("P_SHAWN3");
+			MusicPool.Push("P_OPENIN");
+			MusicPool.Push("P_EVIL");
+			MusicPool.Push("P_ULTIMA");
+		}
+		// tnt
+		if ( Wads.FindLump("T_RUNNIN") )
+		{
+			MusicPool.Push("T_RUNNIN");
+			MusicPool.Push("T_STALKS");
+			MusicPool.Push("T_COUNTD");
+			MusicPool.Push("T_BETWEE");
+			MusicPool.Push("T_DOOM");
+			MusicPool.Push("T_THE_DA");
+			MusicPool.Push("T_SHAWN");
+			MusicPool.Push("T_DDTBLU");
+			MusicPool.Push("T_IN_CIT");
+			MusicPool.Push("T_DEAD");
+			MusicPool.Push("T_STLKS2");
+			MusicPool.Push("T_THEDA2");
+			MusicPool.Push("T_DOOM2");
+			MusicPool.Push("T_DDTBL2");
+			MusicPool.Push("T_RUNNI2");
+			MusicPool.Push("T_DEAD2");
+			MusicPool.Push("T_STLKS3");
+			MusicPool.Push("T_ROMERO");
+			MusicPool.Push("T_SHAWN2");
+			MusicPool.Push("T_MESSAG");
+			MusicPool.Push("T_COUNT2");
+			MusicPool.Push("T_DDTBL3");
+			MusicPool.Push("T_AMPIE");
+			MusicPool.Push("T_THEDA3");
+			MusicPool.Push("T_ADRIAN");
+			MusicPool.Push("T_MESSG2");
+			MusicPool.Push("T_ROMER2");
+			MusicPool.Push("T_TENSE");
+			MusicPool.Push("T_SHAWN3");
+			MusicPool.Push("T_OPENIN");
+			MusicPool.Push("T_EVIL");
+			MusicPool.Push("T_ULTIMA");
+		}
+	}
+
+	override void CheckReplacement( ReplaceEvent e )
+	{
+		if ( bReentrant ) return;
+		// safeguard, don't replace Cyberdemon in E2M8 and E4M6
+		if ( ((level.mapname ~== "E2M8") || (level.mapname ~== "E4M6")) && (e.Replacee is 'Cyberdemon') ) return;
+		// safeguard, don't replace Spiderdemon in E3M8 and E4M8
+		if ( ((level.mapname ~== "E3M8") || (level.mapname ~== "E4M8")) && (e.Replacee is 'Spidermastermind') ) return;
+		// safeguard, don't replace Barons in E1M8
+		if ( (level.mapname ~== "E1M8") && (e.Replacee is 'BaronOfHell') ) return;
+		// safeguard, don't replace Mancubi and Arachnotrons in MAP07
+		if ( ((level.mapname ~== "MAP07") || (level.mapname ~== "PL_MAP07") || (level.mapname ~== "TN_MAP07"))
+			&& ((e.Replacee is 'Fatso') || (e.Replacee is 'Arachnotron')) ) return;
+		bReentrant = true;
+		if ( BossPool.Find(e.Replacee) < BossPool.Size() )
+		{
+			e.Replacement = Actor.GetReplacement(BossPool[Random[Shuffler](0,BossPool.Size()-1)]);
+			e.IsFinal = true;
+		}
+		else if ( Tier1MonsterPool.Find(e.Replacee) < Tier1MonsterPool.Size() )
+		{
+			if ( randomizer_wild && !Random[Shuffler](0,3) ) e.Replacement = Actor.GetReplacement(Tier2MonsterPool[Random[Shuffler](0,Tier2MonsterPool.Size()-1)]);
+			else e.Replacement = Actor.GetReplacement(Tier1MonsterPool[Random[Shuffler](0,Tier1MonsterPool.Size()-1)]);
+			e.IsFinal = true;
+		}
+		else if ( Tier2MonsterPool.Find(e.Replacee) < Tier2MonsterPool.Size() )
+		{
+			e.Replacement = Actor.GetReplacement(Tier2MonsterPool[Random[Shuffler](0,Tier2MonsterPool.Size()-1)]);
+			e.IsFinal = true;
+		}
+		else if ( Tier1WeaponPool.Find(e.Replacee) < Tier1WeaponPool.Size() )
+		{
+			if ( randomizer_wild && !Random[Shuffler](0,3) ) e.Replacement = Actor.GetReplacement(Tier2WeaponPool[Random[Shuffler](0,Tier2WeaponPool.Size()-1)]);
+			else e.Replacement = Actor.GetReplacement(Tier1WeaponPool[Random[Shuffler](0,Tier1WeaponPool.Size()-1)]);
+			e.IsFinal = true;
+		}
+		else if ( Tier2WeaponPool.Find(e.Replacee) < Tier2WeaponPool.Size() )
+		{
+			e.Replacement = Actor.GetReplacement(Tier2WeaponPool[Random[Shuffler](0,Tier2WeaponPool.Size()-1)]);
+			e.IsFinal = true;
+		}
+		else if ( Tier1AmmoPool.Find(e.Replacee) < Tier1AmmoPool.Size() )
+		{
+			if ( randomizer_wild && !Random[Shuffler](0,3) ) e.Replacement = Actor.GetReplacement(Tier2AmmoPool[Random[Shuffler](0,Tier2AmmoPool.Size()-1)]);
+			else e.Replacement = Actor.GetReplacement(Tier1AmmoPool[Random[Shuffler](0,Tier1AmmoPool.Size()-1)]);
+			e.IsFinal = true;
+		}
+		else if ( Tier2AmmoPool.Find(e.Replacee) < Tier2AmmoPool.Size() )
+		{
+			e.Replacement = Actor.GetReplacement(Tier2AmmoPool[Random[Shuffler](0,Tier2AmmoPool.Size()-1)]);
+			e.IsFinal = true;
+		}
+		else if ( BonusPool.Find(e.Replacee) < BonusPool.Size() )
+		{
+			if ( randomizer_wild && !Random[Shuffler](0,9) ) e.Replacement = Actor.GetReplacement(ItemPool[Random[Shuffler](0,ItemPool.Size()-1)]);
+			else e.Replacement = Actor.GetReplacement(BonusPool[Random[Shuffler](0,BonusPool.Size()-1)]);
+			e.IsFinal = true;
+		}
+		else if ( ArmorPool.Find(e.Replacee) < ArmorPool.Size() )
+		{
+			e.Replacement = Actor.GetReplacement(ArmorPool[Random[Shuffler](0,ArmorPool.Size()-1)]);
+			e.IsFinal = true;
+		}
+		else if ( HealthPool.Find(e.Replacee) < HealthPool.Size() )
+		{
+			e.Replacement = Actor.GetReplacement(HealthPool[Random[Shuffler](0,HealthPool.Size()-1)]);
+			e.IsFinal = true;
+		}
+		else if ( ItemPool.Find(e.Replacee) < ItemPool.Size() )
+		{
+			e.Replacement = Actor.GetReplacement(ItemPool[Random[Shuffler](0,ItemPool.Size()-1)]);
+			e.IsFinal = true;
+		}
+		else if ( randomizer_wild && (e.Replacee is 'ExplosiveBarrel') && !Random[Shuffler](0,2) )
+		{
+			e.Replacement = Actor.GetReplacement(Tier1MonsterPool[Random[Shuffler](0,Tier1MonsterPool.Size()-1)]);
+			e.IsFinal = true;
+		}
+		if ( e.Replacement && randomizer_debug )
+			Console.Printf("Replacing %s with %s",e.Replacee.GetClassName(),e.Replacement.GetClassName());
+		bReentrant = false;
+	}
+}

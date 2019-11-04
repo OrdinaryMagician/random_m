@@ -1,0 +1,62 @@
+AddOptionMenu "OptionsMenu"
+{
+	StaticText ""
+	Submenu "$S_RNDTITLE", "RandomizerOptions"
+}
+
+OptionMenu "RandomizerOptions"
+{
+	Title "$S_RNDTITLE"
+	Option "$S_WILDMODE", "randomizer_wild", "YesNo"
+	StaticText "$S_WILDDESC1", "Brown"
+	StaticText "$S_WILDDESC2", "Brown"
+	StaticText "$S_WILDDESC3", "Brown"
+}
+
+LISTMENU "MainMenu"
+{
+	LineSpacing 16
+	StaticPatch 94, 2, "M_DOOM"
+	Position 97, 122
+	IfOption(ReadThis)
+	{
+		Position 97, 114
+	}
+	PatchItem "M_NGAME", "n", "PlayerclassMenu"
+	ifOption(SwapMenu)
+	{
+		PatchItem "M_LOADG", "l", "LoadGameMenu", 0
+		PatchItem "M_SAVEG", "s", "SaveGameMenu",0
+		PatchItem "M_OPTION","o", "OptionsMenu", 0
+	}
+	else
+	{
+		PatchItem "M_OPTION","o", "OptionsMenu", 0
+		PatchItem "M_LOADG", "l", "LoadGameMenu", 0
+		PatchItem "M_SAVEG", "s", "SaveGameMenu", 0
+	}
+	ifOption(ReadThis)
+	{
+		PatchItem "M_RDTHIS","r", "ReadThisMenu", 0
+	}
+	PatchItem "M_QUITG", "q", "QuitMenu", 0
+}
+
+LISTMENU "MainMenuTextOnly"
+{
+	StaticPatch 94, 2, "M_DOOM"
+	Position 97, 122
+	IfOption(ReadThis)
+	{
+		Position 97, 114
+	}
+	TextItem "$MNU_NEWGAME", "n", "PlayerclassMenu"
+	TextItem "$MNU_OPTIONS", "o", "OptionsMenu"
+	TextItem "$MNU_LOADGAME", "l", "LoadGameMenu"
+	TextItem "$MNU_SAVEGAME", "s", "SaveGameMenu"
+	IfOption(ReadThis)
+	{
+		TextItem "$MNU_INFO", "i", "ReadThisMenu"
+	}
+	TextItem "$MNU_QUITGAME", "q", "QuitMenu"
+}
