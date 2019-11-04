@@ -16,7 +16,6 @@ Class RandomIntermissionDM : DeathmatchStatusScreen
 }
 mixin Class RandomIntermission
 {
-	int honk; // hackeroo to work around current mixin breakage
 	TextureID bar[4], plyr[4];
 	bool pflip[4];
 	int pcnt;
