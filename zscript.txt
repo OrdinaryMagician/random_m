@@ -17,6 +17,7 @@ Class RandomIntermissionDM : DeathmatchStatusScreen
 mixin Class RandomIntermission
 {
 	TextureID bar[4], plyr[4];
+	TextureID rerolledPatch;
 	bool pflip[4];
 	int pcnt;
 
@@ -66,20 +67,16 @@ mixin Class RandomIntermission
 	{
 		Super.Ticker();
 		// bar animation counter
-		switch ( CurState )
-		{
-		case StatCount:
-			pcnt = 0;
-			break;
-		case ShowNextLoc:
+		if ( CurState == ShowNextLoc )
 			pcnt++;
-			break;
-		}
 	}
 
 	override void initShowNextLoc()
 	{
 		Super.initShowNextLoc();
+		let hnd = RandomizerStaticData(StaticEventHandler.Find("RandomizerStaticData"));
+		pcnt = 0;
+		if ( hnd && hnd.reroll ) pcnt = 128;	// rerolling, don't advance
 		// extra time for the full animation to play
 		cnt += 2*Thinker.TICRATE;
 	}
@@ -91,12 +88,65 @@ mixin Class RandomIntermission
 		if ( CurState != StatCount ) DrawProgress();
 	}
 
+	override int DrawLF()
+	{
+		let hnd = RandomizerStaticData(StaticEventHandler.Find("RandomizerStaticData"));
+		bool ispatch = wbs.LName0.isValid();
+		int oldy = TITLEY*CleanYfac;
+		int h;
+		if ( !ispatch )
+		{
+			let asc = mapname.mFont.GetMaxAscender(lnametexts[1]);
+			if ( asc > TITLEY-2 ) oldy = (asc+2)*CleanYfac;
+		}
+		int y = DrawName(oldy,wbs.LName0,lnametexts[0]);
+		// If the displayed info is made of patches we need some additional offsetting here.
+		if ( ispatch )
+		{
+			int disp = 0;
+			// The offset getting applied here must at least be as tall as the largest ascender in the following text to avoid overlaps.
+			if ( authortexts[0].length() == 0 )
+			{
+				int h1 = BigFont.GetHeight()-BigFont.GetDisplacement();
+				int h2 = (y-oldy)/CleanYfac/4;
+				disp = min(h1,h2);
+				if ( hnd && hnd.reroll )
+				{
+					if ( !TexMan.OkForLocalization(rerolledPatch,"$WI_REROLLED") )
+						disp += finished.mFont.GetMaxAscender("$WI_REROLLED");
+				}
+				else if ( !TexMan.OkForLocalization(finishedPatch,"$WI_FINISHED") )
+					disp += finished.mFont.GetMaxAscender("$WI_FINISHED");
+			}
+			else disp += author.mFont.GetMaxAscender(authortexts[0]);
+			y += disp*CleanYfac;
+		}
+		y = DrawAuthor(y,StringTable.Localize(authortexts[0]));
+		// draw "Finished!"
+		int statsy = multiplayer?NG_STATSY:SP_STATSY*CleanYFac;
+		if ( y < (statsy-finished.mFont.GetHeight()*3/4)*CleanYfac )
+		{
+			// don't draw 'finished' if the level name is too tall
+			if ( hnd && hnd.reroll )
+				y = DrawPatchOrText(y,finished,rerolledPatch,"$WI_REROLLED");
+			else y = DrawPatchOrText(y,finished,finishedPatch,"$WI_FINISHED");
+		}
+		return y;
+	}
+
+	override void StartMusic()
+	{
+		S_ChangeMusic("D_DM2INT");
+	}
+
 	override void Start( wbstartstruct wbstartstruct )
 	{
+		let hnd = RandomizerStaticData(StaticEventHandler.Find("RandomizerStaticData"));
 		bar[0] = TexMan.CheckForTexture("M_THERMO",TexMan.Type_MiscPatch);
 		bar[1] = TexMan.CheckForTexture("M_THERML",TexMan.Type_MiscPatch);
 		bar[2] = TexMan.CheckForTexture("M_THERMM",TexMan.Type_MiscPatch);
 		bar[3] = TexMan.CheckForTexture("M_THERMR",TexMan.Type_MiscPatch);
+		rerolledPatch = TexMan.CheckForTexture("WIREROLL",TexMan.Type_MiscPatch);
 		let p = GetDefaultByType("DoomPlayer");
 		State s = p.FindState("See",true);
 		for ( int i=0; i<4; i++ )
@@ -105,6 +155,12 @@ mixin Class RandomIntermission
 			s = s.NextState;
 		}
 		Super.Start(wbstartstruct);
+		if ( hnd && hnd.reroll ) PlaySound("random/reroll");
+		// temporary fix until PR merged
+		lnametexts[0] = StringTable.Localize(wbstartstruct.thisname);
+		lnametexts[1] = StringTable.Localize(wbstartstruct.nextname);
+		authortexts[0] = StringTable.Localize(wbstartstruct.thisauthor);
+		authortexts[1] = StringTable.Localize(wbstartstruct.nextauthor);
 	}
 }
 
@@ -112,6 +168,7 @@ mixin Class RandomIntermission
 Class RandomizerStaticData : StaticEventHandler
 {
 	int current, total;
+	bool reroll;	// hint for intermission screen to not advance
 }
 
 // persistent storage for session data (only need to save the "current")
@@ -121,14 +178,18 @@ Class PlayCounter : Thinker
 }
 
 // randomized scale and X / Y mirroring of levels
+// special thanks to Rachael for figuring out the wall texcoord adjustments
 Class LevelRandomizer : LevelPostprocessor
 {
-	protected void Apply(Name checksum, String mapname)
+	protected void Apply( Name checksum, String mapname )
 	{
 		if ( mapname ~== "TITLEMAP" ) return;	// ignore titlemaps
-		// these aren't enabled yet due to missing features
-		/*// X flip
-		if ( Random[Shuffler](0,1) )
+		// need to set a predictable seed here otherwise this breaks
+		// with savegames
+		let hnd = RandomizerStaticData(StaticEventHandler.Find("RandomizerStaticData"));
+		SetRandomSeed[ShufflerLevel](hnd.current+mapname.ByteAt(0)<<8);
+		// X flip
+		if ( Random[ShufflerLevel](0,1) )
 		{
 			// flip vertices
 			for ( int i=0; i<level.Vertexes.Size(); i++ )
@@ -139,7 +200,17 @@ Class LevelRandomizer : LevelPostprocessor
 			// flip linedefs
 			for ( int i=0; i<level.Lines.Size(); i++ )
 			{
-				// TODO
+				FlipLine(i);
+				double wlen = (level.Lines[i].v2.p-level.Lines[i].v1.p).length();
+				for ( int j=0; j<2; j++ )
+				{
+					if ( !level.Lines[i].sidedef[j] ) continue;
+					for ( int k=0; k<3; k++ )
+					{
+						level.lines[i].sidedef[j].SetTextureXOffset(k,-level.lines[i].sidedef[j].GetTextureXOffset(k)-wlen);
+						level.lines[i].sidedef[j].MultiplyTextureXScale(k,-1);
+					}
+				}
 			}
 			// flip things
 			for ( int i=0; i<GetThingCount(); i++ )
@@ -153,7 +224,7 @@ Class LevelRandomizer : LevelPostprocessor
 			}
 		}
 		// Y flip
-		if ( Random[Shuffler](0,1) )
+		if ( Random[ShufflerLevel](0,1) )
 		{
 			// flip vertices
 			for ( int i=0; i<level.Vertexes.Size(); i++ )
@@ -164,7 +235,17 @@ Class LevelRandomizer : LevelPostprocessor
 			// flip linedefs
 			for ( int i=0; i<level.Lines.Size(); i++ )
 			{
-				// TODO
+				FlipLine(i);
+				double wlen = (level.Lines[i].v2.p-level.Lines[i].v1.p).length();
+				for ( int j=0; j<2; j++ )
+				{
+					if ( !level.Lines[i].sidedef[j] ) continue;
+					for ( int k=0; k<3; k++ )
+					{
+						level.lines[i].sidedef[j].SetTextureXOffset(k,-level.lines[i].sidedef[j].GetTextureXOffset(k)-wlen);
+						level.lines[i].sidedef[j].MultiplyTextureXScale(k,-1);
+					}
+				}
 			}
 			// flip things
 			for ( int i=0; i<GetThingCount(); i++ )
@@ -176,11 +257,11 @@ Class LevelRandomizer : LevelPostprocessor
 				double cs = cos(olda), sn = sin(olda);
 				SetThingAngle(i,atan2(-sn,cs));
 			}
-		}*/
+		}
 		// change scale
-		if ( Random[Shuffler](0,1) )
+		if ( Random[ShufflerLevel](0,1) )
 		{
-			double factor = FRandom[Shuffler](0.8,1.6);
+			double factor = FRandom[ShufflerLevel](0.8,1.6);
 			for ( int i=0; i<level.Vertexes.Size(); i++ )
 			{
 				Vector2 oldv = level.Vertexes[i].p;
@@ -188,14 +269,11 @@ Class LevelRandomizer : LevelPostprocessor
 			}
 			for ( int i=0; i<level.Lines.Size(); i++ )
 			{
-				SetWallYScale(i,0,0,1./factor);
-				SetWallYScale(i,0,1,1./factor);
-				SetWallYScale(i,0,2,1./factor);
-				if ( level.Lines[i].sidedef[1] )
+				for ( int j=0; j<2; j++ )
 				{
-					SetWallYScale(i,1,0,1./factor);
-					SetWallYScale(i,1,1,1./factor);
-					SetWallYScale(i,1,2,1./factor);
+					if ( !level.Lines[i].sidedef[j] ) continue;
+					for ( int k=0; k<3; k++ )
+						level.lines[i].sidedef[j].MultiplyTextureYScale(k,1./factor);
 				}
 			}
 			for ( int i=0; i<GetThingCount(); i++ )
@@ -226,10 +304,13 @@ Class RandomizerHandler : EventHandler
 	int current, total;
 	// saved counter
 	PlayCounter cnt;
+	// are we re-rolling the map
+	bool reroll;
 
 	// replacement pools
 	Array<Class<Actor> > Tier1WeaponPool;
 	Array<Class<Actor> > Tier2WeaponPool;
+	Class<Actor> Tier3Weapon;
 	Array<Class<Actor> > Tier1AmmoPool;
 	Array<Class<Actor> > Tier2AmmoPool;
 	Array<Class<Actor> > ArmorPool;
@@ -244,6 +325,16 @@ Class RandomizerHandler : EventHandler
 
 	// prevents infinite loop when checking for replacements
 	bool bReentrant;
+
+	// check to reroll the map
+	override void NetworkProcess( ConsoleEvent e )
+	{
+		if ( e.Name ~== "reroll" )
+		{
+			reroll = true;
+			level.ExitLevel(0,false);
+		}
+	}
 
 	// checks that a weapon has a valid ready state
 	bool IsValidWeapon( Class<Actor> testme )
@@ -261,23 +352,25 @@ Class RandomizerHandler : EventHandler
 		return false;
 	}
 
-	// rounds up to the nearest multiple of 10, clamps between 10 and 100
+	// rounds up to the nearest multiple of 10, clamped
 	private int roundup10( int val )
 	{
 		double rdn = ceil(val/10.);
-		return clamp(int(rdn*10),10,100);
+		int ceilmax = 20*(G_SkillPropertyInt(SKILLP_ACSReturn)+2);
+		return clamp(int(rdn*10),10,ceilmax);
 	}
 
 	override void WorldUnloaded( WorldEvent e )
 	{
 		if ( gamestate == GS_TITLELEVEL ) return;
 		// increment counter
-		cnt.current++;
+		if ( !reroll ) cnt.current++;
 		// pass data to static storage
 		let hnd = RandomizerStaticData(StaticEventHandler.Find("RandomizerStaticData"));
 		if ( !hnd ) return;
 		hnd.current = cnt.current;
 		hnd.total = total;
+		hnd.reroll = reroll;
 	}
 
 	override void WorldLoaded( WorldEvent e )
@@ -334,7 +427,7 @@ Class RandomizerHandler : EventHandler
 		Tier1WeaponPool.Push((Class<Actor>)('Chaingun'));
 		Tier2WeaponPool.Push((Class<Actor>)('RocketLauncher'));
 		Tier2WeaponPool.Push((Class<Actor>)('PlasmaRifle'));
-		Tier2WeaponPool.Push((Class<Actor>)('BFG9000'));
+		Tier3Weapon = 'BFG9000';
 		Tier1AmmoPool.Push((Class<Actor>)('Clip'));
 		Tier1AmmoPool.Push((Class<Actor>)('ClipBox'));
 		Tier1AmmoPool.Push((Class<Actor>)('Shell'));
@@ -374,7 +467,7 @@ Class RandomizerHandler : EventHandler
 		if ( IsValidActor('Archvile') ) Tier2MonsterPool.Push((Class<Actor>)('Archvile'));
 		if ( IsValidActor('Arachnotron') ) Tier2MonsterPool.Push((Class<Actor>)('Arachnotron'));
 		if ( IsValidActor('Fatso') ) Tier2MonsterPool.Push((Class<Actor>)('Fatso'));
-		if ( IsValidActor('WolfensteinSS') ) Tier1MonsterPool.Push((Class<Actor>)('WolfensteinSS'));
+		if ( IsValidActor('WolfensteinSS') && randomizer_wolfss ) Tier1MonsterPool.Push((Class<Actor>)('WolfensteinSS'));
 		// map pool is a bit complicated
 		// doom 1
 		if ( Wads.FindLump("E1M1") )
@@ -606,7 +699,8 @@ Class RandomizerHandler : EventHandler
 		}
 		else if ( Tier2WeaponPool.Find(e.Replacee) < Tier2WeaponPool.Size() )
 		{
-			e.Replacement = Actor.GetReplacement(Tier2WeaponPool[Random[Shuffler](0,Tier2WeaponPool.Size()-1)]);
+			if ( randomizer_wild && !Random[Shuffler](0,3) ) e.Replacement = Actor.GetReplacement(Tier3Weapon);
+			else e.Replacement = Actor.GetReplacement(Tier2WeaponPool[Random[Shuffler](0,Tier2WeaponPool.Size()-1)]);
 			e.IsFinal = true;
 		}
 		else if ( Tier1AmmoPool.Find(e.Replacee) < Tier1AmmoPool.Size() )

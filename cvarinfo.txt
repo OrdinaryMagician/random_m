@@ -1,2 +1,3 @@
 server noarchive bool randomizer_debug = false;
 server bool randomizer_wild = false;
+server bool randomizer_wolfss = false;

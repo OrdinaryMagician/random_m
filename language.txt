@@ -6,6 +6,9 @@ S_WILDMODE = "Wild Mode";
 S_WILDDESC1 = "(25% chance for enemies and weapons/ammo to be of a higher tier)";
 S_WILDDESC2 = "(10% chance for bonus items to become powerups)";
 S_WILDDESC3 = "(33% chance for barrels to become tier 1 enemies)";
+S_INCLWOLF = "Include Wolfenstein nazis";
+S_REROLL = "Reroll current map";
+WI_REROLLED = "Rerolled";
 
 [es]
 S_MAPLEFT = "queda %d mapa";
@@ -15,3 +18,6 @@ S_WILDMODE = "Modo Salvaje";
 S_WILDDESC1 = "(probabilidad del 25% de que enemigos y armas/munición sean de un tier superior)";
 S_WILDDESC2 = "(probabilidad del 10% de que los bonus se conviertan en powerups)";
 S_WILDDESC3 = "(probabilidad del 33% de que los barriles se conviertan en enemigos de tier 1)";
+S_INCLWOLF = "Incluir nazis de Wolfenstein";
+S_REROLL = "Resetear mapa actual";
+WI_REROLLED = "Reseteado";
