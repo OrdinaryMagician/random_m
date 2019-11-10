@@ -3,7 +3,7 @@ GameInfo
 	AddEventHandlers = "RandomizerHandler", "RandomizerStaticData"
 	StatScreen_Coop = "RandomIntermissionCoop"
 	StatScreen_Single = "RandomIntermissionSingle"
-	StatScreen_Single = "RandomIntermissionDM"
+	StatScreen_DM = "RandomIntermissionDM"
 }
 
 // remove cluster texts

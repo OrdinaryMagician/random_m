@@ -101,7 +101,7 @@ mixin Class RandomIntermission
 		State s = p.FindState("See",true);
 		for ( int i=0; i<4; i++ )
 		{
-			[plyr[0], pflip[0]] = s.GetSpriteTexture(12);
+			[plyr[i], pflip[i]] = s.GetSpriteTexture(12);
 			s = s.NextState;
 		}
 		Super.Start(wbstartstruct);
@@ -118,6 +118,105 @@ Class RandomizerStaticData : StaticEventHandler
 Class PlayCounter : Thinker
 {
 	int current;
+}
+
+// randomized scale and X / Y mirroring of levels
+Class LevelRandomizer : LevelPostprocessor
+{
+	protected void Apply(Name checksum, String mapname)
+	{
+		if ( mapname ~== "TITLEMAP" ) return;	// ignore titlemaps
+		// these aren't enabled yet due to missing features
+		/*// X flip
+		if ( Random[Shuffler](0,1) )
+		{
+			// flip vertices
+			for ( int i=0; i<level.Vertexes.Size(); i++ )
+			{
+				Vector2 oldv = level.Vertexes[i].p;
+				SetVertex(i,-oldv.x,oldv.y);
+			}
+			// flip linedefs
+			for ( int i=0; i<level.Lines.Size(); i++ )
+			{
+				// TODO
+			}
+			// flip things
+			for ( int i=0; i<GetThingCount(); i++ )
+			{
+				Vector3 oldp = GetThingPos(i);
+				SetThingXY(i,-oldp.x,oldp.y);
+				// flip angle along Y
+				int olda = GetThingAngle(i);
+				double cs = cos(olda), sn = sin(olda);
+				SetThingAngle(i,atan2(sn,-cs));
+			}
+		}
+		// Y flip
+		if ( Random[Shuffler](0,1) )
+		{
+			// flip vertices
+			for ( int i=0; i<level.Vertexes.Size(); i++ )
+			{
+				Vector2 oldv = level.Vertexes[i].p;
+				SetVertex(i,oldv.x,-oldv.y);
+			}
+			// flip linedefs
+			for ( int i=0; i<level.Lines.Size(); i++ )
+			{
+				// TODO
+			}
+			// flip things
+			for ( int i=0; i<GetThingCount(); i++ )
+			{
+				Vector3 oldp = GetThingPos(i);
+				SetThingXY(i,oldp.x,-oldp.y);
+				// flip angle along Y
+				int olda = GetThingAngle(i);
+				double cs = cos(olda), sn = sin(olda);
+				SetThingAngle(i,atan2(-sn,cs));
+			}
+		}*/
+		// change scale
+		if ( Random[Shuffler](0,1) )
+		{
+			double factor = FRandom[Shuffler](0.8,1.6);
+			for ( int i=0; i<level.Vertexes.Size(); i++ )
+			{
+				Vector2 oldv = level.Vertexes[i].p;
+				SetVertex(i,oldv.x*factor,oldv.y*factor);
+			}
+			for ( int i=0; i<level.Lines.Size(); i++ )
+			{
+				SetWallYScale(i,0,0,1./factor);
+				SetWallYScale(i,0,1,1./factor);
+				SetWallYScale(i,0,2,1./factor);
+				if ( level.Lines[i].sidedef[1] )
+				{
+					SetWallYScale(i,1,0,1./factor);
+					SetWallYScale(i,1,1,1./factor);
+					SetWallYScale(i,1,2,1./factor);
+				}
+			}
+			for ( int i=0; i<GetThingCount(); i++ )
+			{
+				Vector3 oldp = GetThingPos(i);
+				SetThingXY(i,oldp.x*factor,oldp.y*factor);
+				SetThingZ(i,oldp.z*factor);
+			}
+			for ( int i=0; i<level.Sectors.Size(); i++ )
+			{
+				double oldc = level.Sectors[i].ceilingplane.ZAtPoint((0,0)),
+					oldf = level.Sectors[i].floorplane.ZAtPoint((0,0));
+				OffsetSectorPlane(i,0,oldf*(factor-1));
+				OffsetSectorPlane(i,1,oldc*(factor-1));
+				level.Sectors[i].SetXScale(0,1./factor);
+				level.Sectors[i].SetXScale(1,1./factor);
+				level.Sectors[i].SetYScale(0,1./factor);
+				level.Sectors[i].SetYScale(1,1./factor);
+			}
+		}
+	}
 }
 
 // the main bulk of it all
