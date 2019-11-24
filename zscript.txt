@@ -200,7 +200,7 @@ Class LevelRandomizer : LevelPostprocessor
 			// flip linedefs
 			for ( int i=0; i<level.Lines.Size(); i++ )
 			{
-				FlipLine(i);
+				FlipLineVertexes(i);
 				double wlen = (level.Lines[i].v2.p-level.Lines[i].v1.p).length();
 				for ( int j=0; j<2; j++ )
 				{
@@ -235,7 +235,7 @@ Class LevelRandomizer : LevelPostprocessor
 			// flip linedefs
 			for ( int i=0; i<level.Lines.Size(); i++ )
 			{
-				FlipLine(i);
+				FlipLineVertexes(i);
 				double wlen = (level.Lines[i].v2.p-level.Lines[i].v1.p).length();
 				for ( int j=0; j<2; j++ )
 				{
