@@ -16,8 +16,6 @@ OptionMenu "RandomizerOptions"
 	StaticText "$S_WILDDESC3", "Brown"
 }
 
-
-
 LISTMENU "MainMenu"
 {
 	LineSpacing 16

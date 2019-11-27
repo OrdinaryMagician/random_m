@@ -376,10 +376,7 @@ Class RandomizerHandler : EventHandler
 				for ( Actor inv=players[i].mo.inv; inv; inv=inv.inv )
 					everything.Push(inv);
 				for ( int i=0; i<everything.Size(); i++ )
-				{
-					Console.Printf("Destroying %s",everything[i].GetTag());
 					everything[i].Destroy();
-				}
 				players[i].mo.inv = null;
 				players[i].ReadyWeapon = null;
 				players[i].mo.GiveDefaultInventory();
