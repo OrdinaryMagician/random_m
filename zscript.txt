@@ -297,6 +297,8 @@ Class LevelRandomizer : LevelPostprocessor
 	}
 }
 
+
+
 // the main bulk of it all
 Class RandomizerHandler : EventHandler
 {
@@ -356,15 +358,34 @@ Class RandomizerHandler : EventHandler
 	private int roundup10( int val )
 	{
 		double rdn = ceil(val/10.);
-		int ceilmax = 20*(G_SkillPropertyInt(SKILLP_ACSReturn)+2);
-		return clamp(int(rdn*10),10,ceilmax);
+		int ceilmax = 10+(G_SkillPropertyInt(SKILLP_ACSReturn)*5);
+		return clamp(int(rdn*10),10,min(val,ceilmax));
 	}
 
 	override void WorldUnloaded( WorldEvent e )
 	{
 		if ( gamestate == GS_TITLELEVEL ) return;
-		// increment counter
-		if ( !reroll ) cnt.current++;
+		if ( reroll )
+		{
+			for ( int i=0; i<MAXPLAYERS; i++ )
+			{
+				if ( !playeringame[i] ) continue;
+				// destroy everything
+				Array<Actor> everything;
+				everything.Clear();
+				for ( Actor inv=players[i].mo.inv; inv; inv=inv.inv )
+					everything.Push(inv);
+				for ( int i=0; i<everything.Size(); i++ )
+				{
+					Console.Printf("Destroying %s",everything[i].GetTag());
+					everything[i].Destroy();
+				}
+				players[i].mo.inv = null;
+				players[i].ReadyWeapon = null;
+				players[i].mo.GiveDefaultInventory();
+			}
+		}
+		else cnt.current++; // increment counter
 		// pass data to static storage
 		let hnd = RandomizerStaticData(StaticEventHandler.Find("RandomizerStaticData"));
 		if ( !hnd ) return;
@@ -515,12 +536,6 @@ Class RandomizerHandler : EventHandler
 		{
 			for ( int i=1; i<32; i++ )
 				MapPool.Push(String.Format("TN_MAP%02d",i));
-		}
-		// master levels
-		if ( Wads.FindLump("ML_MAP01") )
-		{
-			for ( int i=1; i<21; i++ )
-				MapPool.Push(String.Format("ML_MAP%02d",i));
 		}
 		// nrftl
 		if ( Wads.FindLump("NV_MAP01") )
